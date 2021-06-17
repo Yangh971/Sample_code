@@ -1,6 +1,6 @@
 ---
 title: "Classifcation Challange"
-author: "12889"
+author: "Yang Heppe"
 output:
   pdf_document: default
   html_document: default
