@@ -1,0 +1,153 @@
+---
+title: "Classifcation Challange"
+author: "12889"
+output:
+  pdf_document: default
+  html_document: default
+---
+This is code I used for my Final Machine Learning Project. The task is to create a machine learning model to predict attack comments on Wikipedia comment pages. I am given the data which is the first part of the code where I import it.
+```{r}
+library(quanteda)
+library(glmnet)
+library(e1071)
+library(caret)
+library(knitr)
+library(ggplot2)
+test <- read.csv("C:/Users/yangh/Downloads/ML_coding_challange/test.csv/test.csv", comment.char="#")
+train <- read.csv("C:/Users/yangh/Downloads/ML_coding_challange/train.csv/train.csv", comment.char="#")
+#Introducce a place holder column to the data can be merged. 2 
+test$attack<-c(2)
+both_df<-rbind(train, test)
+#data cleaning
+corpus<- corpus(both_df, text_field="text")
+dfm<-dfm(corpus, stem=T, remove=stopwords('english') ,remove_punct=TRUE)
+dfm=dfm_trim(dfm, min_termfreq=20)
+#Creates index so we can tell the difference between test and train
+tr<-seq(1,15000,1)
+#creates stratified sample for ease of hyperparameter search
+set.seed(2)
+indx<-createDataPartition(dfm$attack[tr], times = 1, p=0.25, list = FALSE)
+indx<-as.vector(indx)
+#tfidf functicon
+df_dfm<-dfm_tfidf(dfm,scheme_tf = "prop")
+
+
+
+
+```
+
+
+```{r}
+#summary statistics 
+atack<-corpus[which(corpus$attack==1)]
+atk_tok<-tokens(atack)
+atk_tok<-tokens_remove(atk_tok, "`")
+ atack_dfm<-dfm(atk_tok, stem=T, remove=stopwords('english') ,remove_punct=TRUE)
+textstat_frequency(atack_dfm, n=20)
+textplot_wordcloud(atack_dfm, max_size = 10, max_word=20)
+
+#non attack
+non_atack<-corpus[which(corpus$attack==0)]
+non_atk_tok<-tokens(non_atack)
+non_atk_tok<-tokens_remove(non_atk_tok, "`")
+non_atack_dfm<-dfm(non_atk_tok, stem=T, remove=stopwords('english') ,remove_punct=TRUE)
+textstat_frequency(non_atack_dfm, n=20)
+
+textplot_wordcloud(non_atack_dfm, max_size = 10, max_word=20)
+
+#text length analysis
+ad_feat<-both_df
+
+ad_feat$charlength<-nchar(ad_feat$text)
+ad_feat$attack<-as.factor(ad_feat$attack)
+ggplot(ad_feat[tr,], aes(x=log(charlength), fill=attack))+theme_bw()+geom_histogram(binwidth = 1)
+
+
+cap_count<-regmatches(ad_feat$text, gregexpr("[A-Z]", ad_feat$text, perl=TRUE))
+a<-{}
+#deals with different data type issues. I have to calculate the length of every second item in the list. 
+for(i in 1:150000)
+{a[i]<-length(cap_count[[i]])}
+ad_feat$cap_count<-a
+
+#creates historgram
+ggplot(ad_feat[tr,], aes(x=log(cap_count[tr]), fill=attack))+theme_bw()+geom_histogram(binwidth = 5)+labs(title = "Histogram of Capital Letters and Frequency ", x="log Number of Capital Letters", y="Frequency")
+
+```
+
+
+```{r}
+#first model
+cv <- cv.glmnet(df_dfm[tr,], dfm$attack[tr] ,family="binomial", type.measure='class')
+lambda.min<-cv$lambda.min
+train_pred<-as.numeric(predict(cv, df_dfm[tr,], s = "lambda.min", type = "class"))
+
+train_pred<-(predict(cv, dfm[tr,], s = "lambda.min", type = "class"))
+
+mean(df_dfm$attack[tr]!=train_pred)
+
+cv_matrix<-confusionMatrix(as.factor(train_pred ), as.factor(df_dfm$attack[tr]))
+
+cv_matrix$byClass
+
+#submssion
+submit_pred<-data.frame(id=test$id, attack=train_pred)
+write.csv(submit_pred, "submit_pred(3).csv")
+#delete index column
+
+
+
+
+
+```
+
+```{r}
+#creates new dfm with the number of capital letters as a feature
+ad_feat<-both_df
+#I assigned the values to an arbitrary variable a
+ad_feat$cap_count<-a
+corpus_ad<-corpus(ad_feat, text_field="text")
+ad_feat_dfm<-dfm(corpus_ad, stem=T, remove=stopwords('english') ,remove_punct=TRUE)
+ad_df_dfm<-dfm_tfidf(ad_feat_dfm,scheme_tf = "prop")
+```
+
+
+```{r}
+#support vector model Testing different types of models.
+set.seed(9)
+tune_mod_ad<- tune(svm, train.x=ad_df_dfm[indx,], train.y=factor(ad_feat_dfm$attack[indx]) , kernel = "linear",  ranges = list(cost = c(0.5,1,5,10,25)))
+
+tune_mod<- tune(svm, train.x=df_dfm[indx,], train.y=factor(df_dfm$attack[indx]) , kernel = "linear",  ranges = list(cost = c(0.5,1,5,10,25)))
+
+tune_mod_rad<- tune(svm, train.x=df_dfm[indx,], train.y=factor(df_dfm$attack[indx]) , kernel = "radial",  ranges = list(cost = c(0.5,1,5,10,25), gammas <- c(.01, .1, .5, 1)))
+
+tune_mod_poly<- tune(svm, train.x=df_dfm[indx,],train.y=factor(df_dfm$attack[indx]) , kernel = "polynomial",  ranges = list(cost = c(0.5,1,5,10,25), degreec=c(2,3,4)))
+
+#mod with feature
+ad_feat_mod<-svm(x=ad_df_dfm[tr,],y=factor(ad_df_dfm$attack[tr]), kernel="linear", cost=5)
+
+ad_pred<-predict(ad_feat_mod,ad_feat_dfm[tr,])
+mean(df_dfm$attack[tr]!=ad_pred)
+ad_test_pred<-predict(ad_feat_mod,ad_feat_dfm[-tr,])
+ad_matrix<-confusionMatrix(
+ad_pred, as.factor(ad_df_dfm$attack[tr]) )
+ad_matrix$byClass
+
+submit_pred<-data.frame(id=test$id, attack=ad_test_pred)
+write.csv(submit_pred, "final_pred(3).csv")
+
+
+
+#mod without feature
+mod <- svm(x=df_dfm[tr,],y=factor(df_dfm$attack[tr]), kernel="linear", cost=5)
+pred_mod_test<-predict(mod,df_dfm[-tr,])
+pred_mod_train<-predict(mod,df_dfm[tr,])
+mean(df_dfm$attack[tr]!=pred_mod_train)
+
+matrix<-confusionMatrix(
+pred_mod_train, as.factor(df_dfm$attack[tr]) )
+matrix$byClass
+
+
+```
+
